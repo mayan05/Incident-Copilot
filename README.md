@@ -1,26 +1,33 @@
-# LangGraph Incident Triage: Starter Repo
+# Incident Copilot
 
-Starting code for the NextWork Project **Build a Multi-Agent Incident Triage System with LangGraph**.
+A resumable, multi-agent incident triage system built with LangGraph and Gemini.
 
-`app.py` is the finished single-analyst incident workflow from the NextWork Project [Build a Resumable LangGraph Workflow](https://nextwork.ai/projects/f94db9b2-1157-404b-a559-83e8752f2f86). It is included unchanged. One Gemini call analyzes an incident, a deterministic policy decides whether a human must approve, `interrupt()` pauses the run, and `SqliteSaver` lets a new process resume it. You don't need to have done that Project first: this repo gives you the same starting point either way.
+Given an alert, the system acts as an incident response team:
 
-In this Project you turn that single analyst into a team: a router, specialist agents that investigate in parallel, recovery when one of them crashes, and an approval gate for each team that owns a fix. The setup code for the specialists and the status page is already here, so you spend your time on the agents and the graph.
+1. **Router (Incident Commander)** — classifies severity and decides which specialists to dispatch.
+2. **Specialists** — logs, deploys, and metrics investigators run in parallel, each using one tool to gather evidence.
+3. **Analyst** — merges every specialist's findings into a single diagnosis with proposed remediation actions.
+4. **Policy check** — decides which actions are risky enough (high severity, or language like "restart" / "delete" / "production") to require human sign-off.
+5. **Approval gates** — the workflow pauses (`interrupt()`) once per gated action, routed to the team that owns the affected service, and resumes from a durable checkpoint once a decision is recorded.
+6. **Runbook** — approved actions and the full audit trail are published as a Markdown runbook.
+
+A read-only status page shows the live state of any incident thread in the browser.
 
 ## What's in the repo
 
 | Path | What it is |
 |---|---|
-| `app.py` | The starting workflow: `start` and `resume` commands, one analyst, one approval gate |
-| `specialists.py` | Setup code for the specialist agents: the Gemini model connection, a fixture loader, and one tool each for logs, deploys, and metrics. You add the agents themselves in the Project |
-| `status_page.py` | The web page for the Secret Mission: HTML, styling, and a small server for Cloud Shell Web Preview. You write the part that reads an incident's saved state |
-| `requirements.txt` | Pinned packages. `langchain` is new in this Project (for `create_agent`) |
-| `data/alerts.json` | Two alerts to triage: `INC-2041` (checkout errors) and `INC-2042` (search latency) |
-| `data/logs.jsonl` | Application logs from the services involved, one JSON object per line |
-| `data/deploys.json` | Recent deploys, with the service, owning team, time, and change |
-| `data/metrics.json` | Metric time series per service |
-| `data/services.json` | Service catalog: owning team, on-call handle, and dependencies |
+| `app.py` | The LangGraph workflow: router, parallel specialists, analyst, policy check, per-team approval gates, runbook publishing. `start` and `resume` CLI commands. |
+| `specialists.py` | The Gemini model connection, fixture loader, and the three specialist agents (logs, deploys, metrics), each with one tool. |
+| `status_page.py` | Local web UI for Cloud Shell Web Preview. Reads an incident's saved checkpoint state and renders it. |
+| `requirements.txt` | Pinned packages (`langgraph`, `langgraph-checkpoint-sqlite`, `langchain`, `langchain-google-genai`). |
+| `data/alerts.json` | Two alerts to triage: `INC-2041` (checkout-api 5xx errors) and `INC-2042` (search-api latency). |
+| `data/logs.jsonl` | Application logs from the services involved, one JSON object per line. |
+| `data/deploys.json` | Recent deploys, with the service, owning team, time, and change. |
+| `data/metrics.json` | Metric time series per service. |
+| `data/services.json` | Service catalog: owning team, on-call handle, and dependencies. |
 
-The data is made up and small on purpose. Your agents read it through tools, so runs are cheap and the answers can be checked.
+The data is made up and small on purpose — agents read it through tools, so runs are cheap and the answers can be checked.
 
 ## Set up (Google Cloud Shell)
 
@@ -29,28 +36,111 @@ You need a Google Cloud project with billing enabled.
 ```bash
 gcloud config set project YOUR_PROJECT_ID
 gcloud services enable aiplatform.googleapis.com
-git clone https://github.com/nextwork-projects/langgraph-incident-triage.git ~/langgraph-incident-triage-agents
-cd ~/langgraph-incident-triage-agents
+git clone https://github.com/mayan05/incident-copilot.git ~/incident-copilot
+cd ~/incident-copilot
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 ```
 
-If the first model call returns `403 PERMISSION_DENIED`, the API was enabled only moments ago. Wait a few minutes and try again.
+If the first model call returns `403 PERMISSION_DENIED`, the API was enabled only moments ago — wait a few minutes and try again.
 
-## Check that it runs
+## Running the workflow
+
+### Start a new incident
 
 ```bash
-python3 app.py start --thread smoke-001 --incident "Checkout API returns HTTP 500 for 1 in 6 requests after a config deploy."
+python3 app.py start --thread inc-2041 --alert INC-2041
 ```
 
-You should see `WORKFLOW PAUSED` and an approval payload. The `LangChainBetaWarning` about the v3 streaming protocol is expected.
+This loads the `INC-2041` fixture, runs the router and specialists, produces a diagnosis, and runs the policy check. If any action needs approval, the run pauses:
+
+```
+WORKFLOW PAUSED: 2 team approvals pending
+- checkout-team (checkout-api): roll back config deploy dep-9183
+- payments-team (payments-api): restart payment worker pool
+```
+
+If nothing needs approval, it publishes straight to a runbook under `runbooks/`.
+
+### Approve or reject a pending action
+
+Resume the same thread, naming the team and decision:
+
+```bash
+python3 app.py resume --thread inc-2041 --team checkout-team --decision approve
+python3 app.py resume --thread inc-2041 --team payments-team --decision reject
+```
+
+Each call resolves only the interrupts owned by that team. Once every gated action has a decision, the run continues on to `publish_runbook` and writes `runbooks/inc-2041.md`.
+
+### Retry a failed run
+
+If a branch raises (e.g. a flaky tool call), resume without `--decision` to retry from the last checkpoint:
+
+```bash
+python3 app.py resume --thread inc-2041
+```
+
+### Try the other fixture
+
+```bash
+python3 app.py start --thread inc-2042 --alert INC-2042
+```
+
+## Testing individual pieces
+
+### Run one specialist in isolation
+
+Useful for checking a specialist's tool and prompt without going through the full graph:
+
+```bash
+python3 specialists.py logs INC-2041
+python3 specialists.py deploys INC-2041
+python3 specialists.py metrics INC-2042
+```
+
+Each prints the specialist's structured finding (summary, evidence, suspected cause, severity) as JSON.
+
+### Simulate a specialist failure
+
+`metric_window` can be forced to raise, to exercise the failure/resume path:
+
+```bash
+TRIAGE_FAIL=metrics python3 app.py start --thread fail-test --alert INC-2041
+```
+
+Use `display_failure`'s output (saved findings, nodes waiting to re-run) to confirm which branches completed before the crash, then resume normally:
+
+```bash
+python3 app.py resume --thread fail-test
+```
+
+### View the status page
+
+```bash
+python3 status_page.py
+```
+
+Opens a server on port 8080 (use Cloud Shell's **Web Preview > Preview on port 8080**). The page lists every saved thread in the left nav and auto-refreshes every 5 seconds, so you can start/resume a run in one terminal and watch its state change in the browser.
+
+### Full test suite (solution branch)
+
+The `solution` branch has offline tests that don't require live Gemini calls:
+
+```bash
+git checkout solution
+python3 -m pip install pytest
+python3 -m pytest
+```
+
+Use it to check your own implementation against the finished build if you get stuck.
 
 ## Cost
 
-Each run makes a few Gemini 3.7 Flash calls, which costs a few cents at most. Cloud Shell is free.
+Each run makes a few Gemini 3.7 Flash calls, which costs a few cents at most. Cloud Shell itself is free.
 
 ## Branches
 
-- `main` is the starting point for the Project. Clone it and follow the Project's steps from here.
-- `solution` is the finished build, with offline tests (`python3 -m pip install pytest && python3 -m pytest`). Use it to check your work if you get stuck.
+- `main` — the starting point for the project build.
+- `solution` — the finished build, with offline tests (`python3 -m pytest`).
