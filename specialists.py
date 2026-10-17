@@ -8,6 +8,10 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+import dotenv
+
+dotenv.load_dotenv()
+
 # Keep every specialist on one model and one fixture directory.
 MODEL_ID = "gemini-3.7-flash"
 DATA_DIR = Path(__file__).parent / "data"

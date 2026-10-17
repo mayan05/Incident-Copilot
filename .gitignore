@@ -5,4 +5,5 @@ __pycache__/
 *.db-wal
 runbooks/
 .env
+.vscode/
 .pytest_cache/
