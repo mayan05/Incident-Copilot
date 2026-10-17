@@ -8,10 +8,6 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-import dotenv
-
-dotenv.load_dotenv()
-
 # Keep every specialist on one model and one fixture directory.
 MODEL_ID = "gemini-3.7-flash"
 DATA_DIR = Path(__file__).parent / "data"
@@ -24,20 +20,17 @@ def load_json(name: str):
 
 
 def build_model():
-    # Use a Gemini API key instead of Vertex AI, so running the project
-    # needs no gcloud setup, billed project, or application-default login.
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GOOGLE_API_KEY is not set. Get a free key from "
-            "https://aistudio.google.com/apikey and set it as an "
-            "environment variable."
-        )
+    # Read the active project selected in Cloud Shell.
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project_id:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT is not set.")
 
-    # Bound retries and request time the same way the Vertex client did.
+    # Use Vertex AI with bounded retries and request time.
     return ChatGoogleGenerativeAI(
         model=MODEL_ID,
-        google_api_key=api_key,
+        project=project_id,
+        location="global",
+        vertexai=True,
         max_retries=2,
         timeout=180,
     )
