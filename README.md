@@ -29,21 +29,29 @@ A read-only status page shows the live state of any incident thread in the brows
 
 The data is made up and small on purpose — agents read it through tools, so runs are cheap and the answers can be checked.
 
-## Set up (Google Cloud Shell)
+## Set up
 
-You need a Google Cloud project with billing enabled.
+Runs anywhere Python does — no Google Cloud project, billing, or `gcloud` CLI required.
 
-```bash
-gcloud config set project YOUR_PROJECT_ID
-gcloud services enable aiplatform.googleapis.com
-git clone https://github.com/mayan05/incident-copilot.git ~/incident-copilot
-cd ~/incident-copilot
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
-```
+1. Get a free Gemini API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Clone and install:
 
-If the first model call returns `403 PERMISSION_DENIED`, the API was enabled only moments ago — wait a few minutes and try again.
+   ```bash
+   git clone https://github.com/mayan05/incident-copilot.git
+   cd incident-copilot
+   python3 -m venv .venv
+   source .venv/bin/activate   # Windows: .venv\Scripts\activate
+   python3 -m pip install -r requirements.txt
+   ```
+
+3. Set your API key as an environment variable (do this once per shell, or add it to your shell profile / a `.env` file — never commit it):
+
+   ```bash
+   export GOOGLE_API_KEY="your-key-here"          # macOS/Linux
+   setx GOOGLE_API_KEY "your-key-here"             # Windows (restart terminal after)
+   ```
+
+If a model call returns a permission or quota error, double-check the key is set in the terminal you're running from (`echo $GOOGLE_API_KEY`).
 
 ## Running the workflow
 
@@ -122,7 +130,7 @@ python3 app.py resume --thread fail-test
 python3 status_page.py
 ```
 
-Opens a server on port 8080 (use Cloud Shell's **Web Preview > Preview on port 8080**). The page lists every saved thread in the left nav and auto-refreshes every 5 seconds, so you can start/resume a run in one terminal and watch its state change in the browser.
+Opens a server on port 8080 — open `http://localhost:8080` in your browser. The page lists every saved thread in the left nav and auto-refreshes every 5 seconds, so you can start/resume a run in one terminal and watch its state change in the browser.
 
 ### Full test suite (solution branch)
 
@@ -138,7 +146,7 @@ Use it to check your own implementation against the finished build if you get st
 
 ## Cost
 
-Each run makes a few Gemini 3.7 Flash calls, which costs a few cents at most. Cloud Shell itself is free.
+Each run makes a few Gemini 3.7 Flash calls. The Gemini API free tier covers this comfortably for testing.
 
 ## Branches
 
